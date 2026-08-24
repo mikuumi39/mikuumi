@@ -1,0 +1,175 @@
+/* ============================================================
+   mikuumi · 数字空间 — 页面脚本
+   模块:星空背景 / 滚动显现 / 导航状态 / 光标光晕
+   约定:全部包在 IIFE 内,不引入全局变量;每个模块独立容错。
+   ============================================================ */
+(() => {
+  "use strict";
+
+  const reduceMotion =
+    window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- 星空背景 ---------- */
+  function initStars() {
+    const canvas = document.getElementById("stars");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let vw = 0, vh = 0;
+    const rand = (a, b) => a + Math.random() * (b - a);
+
+    function applySize() {
+      vw = window.innerWidth;
+      vh = window.innerHeight;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = vw * dpr;
+      canvas.height = vh * dpr;
+      canvas.style.width = vw + "px";
+      canvas.style.height = vh + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    applySize();
+
+    // 窄屏减量,兼顾移动端性能
+    const COUNT = vw < 768 ? 90 : 180;
+    // 双层景深:远景(70%)小而慢且暗,近景(30%)大而快且亮 —— 视差产生真实纵深
+    const depthLayer = () => Math.random() < 0.7
+      ? { r: rand(0.4, 1.0), v: rand(0.03, 0.08), o: rand(0.2, 0.5) }
+      : { r: rand(1.2, 2.2), v: rand(0.12, 0.25), o: rand(0.5, 0.95) };
+    const stars = Array.from({ length: COUNT }, () => {
+      const d = depthLayer();
+      return {
+        x: rand(0, vw),
+        y: rand(0, vh),
+        r: d.r,
+        v: d.v,
+        o: d.o,
+        rgb: Math.random() < 0.82 ? "110,231,255" : "192,132,252",
+        phase: rand(0, Math.PI * 2),
+        twinkle: rand(0.4, 1.2)
+      };
+    });
+
+    function draw(t) {
+      ctx.clearRect(0, 0, vw, vh);
+      const sec = t / 1000;
+      for (const s of stars) {
+        s.y -= s.v;
+        if (s.y < -2) { s.y = vh + 2; s.x = rand(0, vw); }
+        const a = reduceMotion ? s.o : s.o * (0.78 + 0.22 * Math.sin(sec * s.twinkle + s.phase));
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(" + s.rgb + "," + a.toFixed(3) + ")";
+        ctx.arc(s.x, s.y, s.r, 0, 6.2832);
+        ctx.fill();
+      }
+      if (!reduceMotion) requestAnimationFrame(draw);
+    }
+
+    let lastW = vw, lastH = vh;
+    window.addEventListener("resize", () => {
+      // 手机地址栏收展会触发 resize,尺寸没变就不重置画布
+      if (window.innerWidth === lastW && window.innerHeight === lastH) return;
+      lastW = window.innerWidth; lastH = window.innerHeight;
+      applySize();
+      if (reduceMotion) draw(performance.now()); // 静态模式重绘一帧
+    }, { passive: true });
+
+    if (reduceMotion) draw(performance.now());
+    else requestAnimationFrame(draw);
+  }
+
+  /* ---------- 滚动显现 + 技能条填充 ---------- */
+  function initReveal() {
+    const els = document.querySelectorAll(".reveal");
+    if (!("IntersectionObserver" in window)) {
+      els.forEach(el => el.classList.add("visible"));
+      return;
+    }
+    const io = new IntersectionObserver(entries => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        en.target.classList.add("visible");
+        en.target.querySelectorAll(".progress").forEach(bar => {
+          bar.style.width = bar.dataset.width + "%";
+        });
+        io.unobserve(en.target); // 显现一次即可,停止观察
+      }
+    }, { rootMargin: "0px 0px -10% 0px", threshold: 0 }); // 进入视口下沿前 10% 即触发,滚动节奏更连贯
+    els.forEach(el => io.observe(el));
+  }
+
+  /* ---------- 导航状态:滚动加深 + 当前分区高亮 ---------- */
+  function initNav() {
+    const nav = document.querySelector(".nav");
+    if (!nav || !("IntersectionObserver" in window)) return;
+
+    // 滚离页面顶部后加深导航底色(1px 哨兵元素,避免 0 高度元素的 IO 边界歧义)
+    const sentinel = document.createElement("div");
+    sentinel.style.cssText = "position:absolute;top:0;left:0;width:1px;height:1px;pointer-events:none;";
+    document.body.prepend(sentinel);
+    new IntersectionObserver(([en]) => {
+      nav.classList.toggle("scrolled", !en.isIntersecting);
+    }).observe(sentinel);
+
+    // 视口中线穿过哪个分区就高亮哪个链接(视觉 .active + 屏幕阅读器 aria-current 双通道)
+    const links = Array.from(document.querySelectorAll(".nav-links a"));
+    const byId = {};
+    links.forEach(a => {
+      const id = (a.hash || "").slice(1);
+      if (id && document.getElementById(id)) byId[id] = a;
+    });
+    const clearActive = () => links.forEach(l => {
+      l.classList.remove("active");
+      l.removeAttribute("aria-current");
+    });
+    const io = new IntersectionObserver(entries => {
+      entries.forEach(en => {
+        if (!en.isIntersecting) return;
+        if (en.target.id === "hero") { clearActive(); return; } // 回到 Hero,清掉残留高亮
+        const link = byId[en.target.id];
+        if (!link) return;
+        clearActive();
+        link.classList.add("active");
+        link.setAttribute("aria-current", "true");
+      });
+    }, { rootMargin: "-45% 0px -50% 0px", threshold: 0 });
+    Object.keys(byId).forEach(id => io.observe(document.getElementById(id)));
+    const heroSec = document.getElementById("hero");
+    if (heroSec) io.observe(heroSec);
+  }
+
+  /* ---------- 光标光晕(仅精确指针设备) ---------- */
+  function initGlow() {
+    if (reduceMotion) return;
+    const glow = document.querySelector(".cursor-glow");
+    if (!glow) return;
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+
+    let tx = -500, ty = -500, x = tx, y = ty, raf = 0;
+    const HALF = (glow.offsetWidth || 350) / 2; // 尺寸以 CSS 为准,不硬编码
+    const step = () => {
+      raf = 0;
+      x += (tx - x) * 0.18; // 轻微插值,让光晕有拖尾质感
+      y += (ty - y) * 0.18;
+      glow.style.transform = "translate(" + x.toFixed(1) + "px," + y.toFixed(1) + "px)";
+      if (Math.abs(tx - x) > 0.2 || Math.abs(ty - y) > 0.2) raf = requestAnimationFrame(step);
+    };
+    window.addEventListener("mousemove", e => {
+      tx = e.clientX - HALF;
+      ty = e.clientY - HALF;
+      if (!raf) raf = requestAnimationFrame(step); // 合帧,避免高频布局写入
+    }, { passive: true });
+  }
+
+  /* ---------- 启动:模块间互相独立,单个失败不影响其余 ---------- */
+  const modules = [initStars, initReveal, initNav, initGlow];
+  function boot() {
+    // iOS Safari 需要页面存在 touch 监听才会激活 :active 样式
+    document.addEventListener("touchstart", () => {}, { passive: true });
+    modules.forEach(fn => { try { fn(); } catch (err) { /* 单模块降级 */ } });
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+})();
