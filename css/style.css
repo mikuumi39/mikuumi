@@ -140,9 +140,13 @@ a { -webkit-tap-highlight-color: transparent; } /* 自定义交互已有完整�
 .btn-primary:active { transform: translateY(0); box-shadow: 0 0 14px var(--glow); }
 .btn-primary svg { width: 15px; height: 15px; }
 
-/* 进入动画:纯 CSS,不依赖 JS(禁 JS 也能完整显示) */
+/* 进入动画:纯 CSS,不依赖 JS(禁 JS 也能完整显示)
+   毛玻璃渐显:从轻微模糊、半透明、上浮,慢慢显现直到清晰 */
 .rise { animation: rise var(--dur-slow) var(--ease-out) both; animation-delay: var(--d, 0s); }
-@keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(18px); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
 @keyframes ring-spin { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
 @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-14px); } }
 
@@ -157,9 +161,22 @@ section { padding: 56px 8%; }
   width: 50px; height: 3px; margin: 12px auto 0;
   background: var(--grad-brand); border-radius: 4px;
 }
-/* 滚动显现(js/main.js 的 IntersectionObserver 切换 .visible) */
-.reveal { opacity: 0; transform: translateY(28px); transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out); } /* 与 .rise 同曲线,进入语言统一 */
-.reveal.visible { opacity: 1; transform: none; }
+/* 滚动显现(js/main.js 的 IntersectionObserver 切换 .visible)
+   与全站「毛玻璃渐显」语言统一:模糊 → 清晰,同曲线同节奏 */
+.reveal {
+  opacity: 0; transform: translateY(28px); filter: blur(8px);
+  will-change: opacity, transform, filter;
+  transition:
+    opacity var(--dur-slow) var(--ease-out),
+    transform var(--dur-slow) var(--ease-out),
+    filter var(--dur-slow) var(--ease-out);
+}
+.reveal.visible { opacity: 1; transform: none; filter: blur(0); will-change: auto; }
+
+/* 触屏/窄屏:GPU 预算留给滚动,模糊减半、位移收短 */
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
+  .reveal { filter: blur(5px); transform: translateY(18px); }
+}
 
 /* ---------- 卡片 ---------- */
 .cards {
